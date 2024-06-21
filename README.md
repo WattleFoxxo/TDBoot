@@ -16,7 +16,7 @@ You can customise the partition table to change the name of each application, ch
 
 > example flashing the first partition
 
-`espflash write-bin 0x70000 firmware.bin`
+`espflash write-bin 0x070000 firmware.bin`
 
 ## Related
 - TDBoot-Bootloader: [WattleFoxxo/TDBoot-Bootloader](https://github.com/WattleFoxxo/TDBoot-Bootloader)
