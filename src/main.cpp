@@ -1,164 +1,272 @@
-#include <Arduino.h>
-#include <Wire.h>
-#include <SPI.h>
-#include <Update.h>
-#include <esp_ota_ops.h>
+#include "main.h"
 
-#include "config.h"
-#include "pins.h"
-#include <Arduino_GFX_Library.h>
+Adafruit_SharpMem_Dither display(TDECK_SCLK, TDECK_MOSI, TDECK_LCD_CS, SCREEN_WIDTH, SCREEN_HEIGHT);
+Adafruit_GFX* gfx = &display;
 
-#define GFX_DEV_DEVICE LILYGO_T_DECK
-#define GFX_BL TDECK_TFT_BACKLIGHT
+Adafruit_FlashTransport_SPI flashTransport(TDECK_SD_CS, SPI);
 
-Arduino_DataBus *bus = new Arduino_ESP32SPI(TDECK_TFT_DC, TDECK_TFT_CS, TDECK_SPI_SCK, TDECK_SPI_MOSI, TDECK_SPI_MISO);
-Arduino_GFX *gfx = new Arduino_ST7789(bus, GFX_NOT_DEFINED, 1, false);
+Adafruit_SPIFlash flash(&flashTransport);
+FatVolume fatfs;
+FatFile myFile;
 
-void print_menu();
-void print_apps();
-void start_app(int index, char* name);
-
-int current_selection = 0;
-int number_of_apps = 0;
-
-struct app {
-    int id;
-    char name[MAX_NAME_SIZE];
-};
-
-app apps[MAX_APPS];
+App apps[MAX_APPS];
+uint16_t apps_count = 0;
+uint16_t selected_app = 1;
 
 void setup() {
     Serial.begin(115200);
 
-    Serial.println("[BOOT_MENU] keyboard init");
+    // while (!Serial);
+    delay(2000);
+ 
+    Serial.println("Hello world!");
 
-    pinMode(TDECK_PERI_POWERON, OUTPUT);
-    pinMode(TDECK_TFT_CS, OUTPUT);
+    initialize_keyboard();
+    // initialize_partitions();
 
-    digitalWrite(TDECK_PERI_POWERON, HIGH);
-    digitalWrite(TDECK_TFT_CS, HIGH);
+    // pinMode(TDECK_SD_CS, OUTPUT);
+    // pinMode(TDECK_LCD_CS, OUTPUT);
 
-    delay(500);
+    // digitalWrite(TDECK_SD_CS, HIGH);
+    // digitalWrite(TDECK_LCD_CS, HIGH);
+
+    delay(2000);
+
+    for (size_t i = 0; i < 5; i++) {
+        App newApp;
+        newApp.name = String("Test App ") + String(i + 1);
+        newApp.path = String("/test") + String(i + 1);
+        newApp.flash_size = 250400;
+        newApp.sd_size = 4294967296;
+
+        apps[i] = newApp;
+    }
+
+    apps_count = 5;
+    
+    // while (true);
+
+    display.begin();
+    display.setRotation(2);
+    display.clearDisplay();
+    display.cp437(true);
+
+    // delay(2000);
+
+    // if (!flash.begin()) {
+    //     Serial.println("Failed to initialise sdcard");
+    // }
+
+    // if (!fatfs.begin(&flash, true, 1)) {
+    //     Serial.println("Failed to mount file system");
+    // }
+
+    // Serial.println("File system found");
+    
+    // if (fatfs.exists("test")) {
+    //     Serial.println("/test/ ecists");
+    // }
+
+    // fatfs.ls();
+}
+
+uint8_t is_redraw = 1;
+
+void loop() {
+    // display.clearDisplay();
+    gfx->fillScreen(COLOUR_WHITE);
+
+    draw_ui();
+
+    display.refresh();
+    delay(50);
+}
+
+void draw_ui() {
+    // gfx->fillRect(0, 0, SCREEN_WIDTH, 40, COLOUR_DARK_GREY);
+
+    // Title bar
+    draw_gradient_rect(gfx, 0, 0, SCREEN_WIDTH, 30, 1, 14);
+    draw_text_left(gfx, "Boot Menu", 3, 23, COLOUR_WHITE, &FreeSansOblique12pt7b);
+
+    // App info
+
+
+    draw_app_info(&apps[selected_app]);
+
+    int x_offest = 10;
+    int y_offset = 45;
+
+    GFXcanvas16 list_view(200, 210);
+
+    list_view.fillScreen(COLOUR_WHITE);
+
+    list_view.fillRect(0, selected_app * 30, 200, 30, 14);
+    list_view.drawRect(0, selected_app * 30, 200, 30, COLOUR_BLACK);
+
+    uint16_t scroll_offset = 0;
+
+    for (size_t i = 0; i < apps_count; i++) {
+        list_view.drawBitmap(5, 5 + (i * 30), icon_small, 20, 20, COLOUR_BLACK, COLOUR_WHITE);
+        list_view.drawRect(5, 5 + (i * 30), 20, 20, COLOUR_BLACK);
+
+        if(i == selected_app) list_view.drawRect(4, 4 + (i * 30), 22, 22, COLOUR_BLACK);
+
+        draw_text_left(&list_view, apps[i].name.c_str(), 30, 20 + (i * 30), COLOUR_BLACK, i == selected_app ? &FreeSansBold9pt7b : &FreeSans9pt7b);
+    }
+
+    gfx->drawRGBBitmap(10, 40, list_view.getBuffer(), list_view.width(), list_view.height());
+}
+
+void draw_app_info(App* app) {
+    // TODO: Draw Icon
+    gfx->drawBitmap(SCREEN_WIDTH - 145, 40, icon_large, 110, 110, COLOUR_BLACK, COLOUR_WHITE);
+    gfx->drawRect(SCREEN_WIDTH - 145, 40, 110, 110, COLOUR_BLACK);
+
+    draw_text_center(gfx, app->name.c_str(), SCREEN_WIDTH - 92, 170, COLOUR_BLACK, &FreeSansBold9pt7b);
+    draw_text_center(gfx, (String("/mnt/sd") + app->path).c_str(), SCREEN_WIDTH - 92, 190, COLOUR_DARK_GREY, &FreeSansBoldOblique9pt7b);
+    draw_text_center(gfx, String(formatBytes(app->flash_size) + " flash").c_str(), SCREEN_WIDTH - 92, 210, COLOUR_DARK_GREY, &FreeSansBoldOblique9pt7b);
+    draw_text_center(gfx, String(formatBytes(app->sd_size) + " sd").c_str(), SCREEN_WIDTH - 92, 230, COLOUR_DARK_GREY, &FreeSansBoldOblique9pt7b);
+}
+
+void draw_text_center(Adafruit_GFX *context, const char* text, uint16_t x, uint16_t y, uint16_t colour, const GFXfont* font, uint8_t size) {
+    context->setTextSize(size);
+    context->setFont(font);
+    context->setTextColor(colour);
+
+    int16_t x1, y1;
+    uint16_t w, h;
+    context->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+
+    context->setCursor(x - w / 2, y);
+    context->println(text);
+}
+
+void draw_text_left(Adafruit_GFX *context, const char* text, uint16_t x, uint16_t y, uint16_t colour, const GFXfont* font, uint8_t size) {
+    context->setTextSize(size);
+    context->setFont(font);
+    context->setTextColor(colour);
+
+    int16_t x1, y1;
+    uint16_t w, h;
+    context->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+
+    context->setCursor(x, y);
+    context->println(text);
+}
+
+void draw_text_right(Adafruit_GFX *context, const char* text, uint16_t x, uint16_t y, uint16_t colour, const GFXfont* font, uint8_t size) {
+    context->setTextSize(size);
+    context->setFont(font);
+    context->setTextColor(colour);
+
+    int16_t x1, y1;
+    uint16_t w, h;
+    context->getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+
+    context->setCursor(x - w, y);
+    context->println(text);
+}
+
+void draw_gradient_rect(Adafruit_GFX *context, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t colour_from, uint16_t colour_to) {
+    for (size_t i = 0; i < w; i++) {
+        context->drawLine(i + x, y, i + x, h, map(i, 0, w, colour_from, colour_to));
+    }
+}
+
+String formatBytes(uint64_t bytes) {
+    char output[32];
+    if (bytes >= 1073741824ULL)
+        snprintf(output, sizeof(output), "%.2f GB", bytes / 1073741824.0);
+    else if (bytes >= 1048576)
+        snprintf(output, sizeof(output), "%.2f MB", bytes / 1048576.0);
+    else if (bytes >= 1024)
+        snprintf(output, sizeof(output), "%.2f KB", bytes / 1024.0);
+    else
+        snprintf(output, sizeof(output), "%llu B", bytes);
+    return String(output);
+  }
+
+void initialize_keyboard() {
+    pinMode(TDECK_POWERON, OUTPUT);
+    digitalWrite(TDECK_POWERON, HIGH);
+
+    pinMode(TDECK_TRACKBALL_UP, INPUT_PULLUP);
+    pinMode(TDECK_TRACKBALL_DOWN, INPUT_PULLUP);
+    pinMode(TDECK_TRACKBALL_LEFT, INPUT_PULLUP);
+    pinMode(TDECK_TRACKBALL_RIGHT, INPUT_PULLUP);
+    pinMode(TDECK_TRACKBALL_CLICK, INPUT_PULLUP);
+
+    attachInterrupt(TDECK_TRACKBALL_UP, []() {
+        if (selected_app - 1 < 0) return;
+
+        selected_app -= 1;
+    }, FALLING);
+
+    attachInterrupt(TDECK_TRACKBALL_DOWN, []() {
+        if (selected_app + 1 >= apps_count) return;
+
+        selected_app += 1;
+    }, FALLING);
+
+    attachInterrupt(TDECK_TRACKBALL_LEFT, []() {
+
+    }, FALLING);
+
+    attachInterrupt(TDECK_TRACKBALL_RIGHT, []() {
+
+    }, FALLING);
+
+    attachInterrupt(TDECK_TRACKBALL_CLICK, []() {
+        
+    }, FALLING);
+
+    delay(500); // Wait for the keyboard to power on
 
     Wire.begin(TDECK_I2C_SDA, TDECK_I2C_SCL);
-
     Wire.requestFrom(TDECK_KEYBOARD_ADDR, 1);
     if (Wire.read() == -1) {
-        while (1) {
-            Serial.println("[BOOT_MENU] keyboard not responding, waiting 1000 ms");
+        Serial.println("Keyboard failed to start.");
+
+        while (true) {
             delay(1000);
         }
     }
-
-    Serial.println("[BOOT_MENU] display init");
-    if (!gfx->begin()) {
-        Serial.println("[BOOT_MENU] display init failed, trying to continue");
-    }
-
-    gfx->fillScreen(GUI_BACKGROUND);
-    gfx->setTextColor(GUI_FOREGROUND);
-
-    #ifdef GFX_BL
-        pinMode(GFX_BL, OUTPUT);
-        digitalWrite(GFX_BL, HIGH);
-    #endif
-
-    print_menu();
 }
 
-void loop() {
-    char keyValue = 0;
-    Wire.requestFrom(TDECK_KEYBOARD_ADDR, 1);
-    while (Wire.available() > 0) {
-        keyValue = Wire.read();
-        if (keyValue != (char)0x00) {
-            if (keyValue == 'w' && current_selection > 0) current_selection -= 1;
-            if (keyValue == 's' && current_selection < number_of_apps) current_selection += 1;
-            if (keyValue == 13) start_app(apps[current_selection].id, apps[current_selection].name);
+// void initialize_partitions() {
+//     esp_partition_iterator_t iterator = NULL;
+//     const esp_partition_t *next_partition = NULL;
 
-            gfx->fillRect(0, 35, 15, gfx->height(), GUI_BACKGROUND);
-            print_apps();
-        }
-    }
+//     iterator = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
 
-    delay(5);
-}
+//     int index = 0;
+//     while (iterator) {
+//         next_partition = esp_partition_get(iterator);
 
-// Print partition table
-void print_menu() {
-    gfx->fillScreen(GUI_BACKGROUND);
-    gfx->setCursor(0, 10);
+//         if (next_partition != NULL && index != 0 && index <= MAX_APPS) {
+//             int app_index = index - 1;
 
-    gfx->println(" TD-Boot 0.1.0\n Use W and S keys to select an app, then press enter.\n");
+//             App newApp;
+//             // newApp.id = app_index;
+//             newApp.partition = next_partition;
 
-    print_apps();
-}
+//             apps[app_index] = newApp;
+//             apps_count = app_index;
+//         }
 
-void print_apps() {
-    gfx->setCursor(0, 35);
+//         index += 1;
+//         iterator = esp_partition_next(iterator);
+//     }
+// }
 
-    esp_partition_iterator_t iterator = NULL;
-    const esp_partition_t *next_partition = NULL;
+int start_app(const esp_partition_t* partition) {
+    int error = esp_ota_set_boot_partition(partition);
+    
+    if (error != ESP_OK) return error;
 
-    iterator = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    Wire.end();
+    esp_restart();
 
-    int index = 0;
-    while (iterator) {
-        next_partition = esp_partition_get(iterator);
-
-        // Skip boot menu app
-        if (next_partition != NULL && index != 0 && index <= MAX_APPS) {
-
-            int app_index = index - 1;
-            bool selected = (app_index == current_selection);
-
-            gfx->printf(" %s%d.   %s (0x%06x)\n", selected ? "> " : "  ", app_index, next_partition->label, next_partition->address);
-
-            // Add app to the list
-            app newApp;
-            newApp.id = app_index;
-            strcpy(newApp.name, next_partition->label);
-
-            apps[app_index] = newApp;
-            number_of_apps = app_index;
-        }
-
-        index += 1;
-        iterator = esp_partition_next(iterator);
-    }
-}
-
-void start_app(int index, char* name) {
-    const esp_partition_t *next_partition = esp_ota_get_next_update_partition(NULL);
-
-    if (index > 0 && index <= 4) {
-        for (int i = 0; i < index; i++) {
-            next_partition = esp_ota_get_next_update_partition(next_partition);
-            if (!next_partition) break;
-        }
-    }
-
-    if (next_partition && esp_ota_set_boot_partition(next_partition) == ESP_OK) {
-        printf("[BOOT_MENU] starting: %s (%s)\n", name, next_partition->label);
-
-        gfx->setCursor(0, 10);
-        gfx->fillScreen(GUI_BACKGROUND);
-        gfx->printf(" Starting %s...\n", name);
-
-        Wire.end(); // STOP KEYBOARD TO AVOID ERRORS!!!!
-
-        esp_restart();
-
-    } else {
-        printf("[BOOT_MENU] failed to set partition\n");
-
-        gfx->setCursor(0, 10);
-        gfx->fillScreen(GUI_BACKGROUND);
-        gfx->printf(" Faild to start %s.\n", name);
-
-        delay(500);
-
-        print_menu();
-    }
+    return ESP_OK;
 }
